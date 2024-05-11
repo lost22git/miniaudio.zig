@@ -3,6 +3,8 @@
 
 my learning demonstration of Zig code interacting with C code
 
+[API DOC](https://lost22git.github.io/miniaudio.zig)
+
 ## Resources
 
 - https://ziglang.org/documentation/master/#C
