@@ -10,10 +10,12 @@ jobs:
     steps:
       - name: Install Zig
         uses: korandoru/setup-zig@v1
+        with:
+          zig-version: 0.12.0
       - name: Check out repository code
         uses: actions/checkout@v4
       - name: Generate documentation
-        run: zig build docs
+        run: zig build docs --summary all
       - name: Deploy to GitHub Pages
         if: success()
         uses: crazy-max/ghaction-github-pages@v4
