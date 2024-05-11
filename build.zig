@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const miniaudio_header_dir = "src/c";
 const miniaudio_src_file = "src/c/miniaudio.c";
 const main_file = "src/main.zig";
@@ -84,5 +85,24 @@ pub fn build(b: *std.Build) void {
             .install_subdir = "docs/",
         });
         docs_step.dependOn(&install_docs.step);
+    }
+
+    // clean
+    //
+    {
+        const clean_step = b.step("clean", "Clean install dir and cache dir");
+
+        const delete_install_dir = b.addRemoveDirTree(b.install_path);
+        clean_step.dependOn(&delete_install_dir.step);
+
+        if (b.cache_root.path) |cache_dir| {
+            if (builtin.os.tag == .windows) {
+                // Cannot work for windows
+                //
+            } else {
+                const delete_cache_dir = b.addRemoveDirTree(cache_dir);
+                clean_step.dependOn(&delete_cache_dir.step);
+            }
+        }
     }
 }
