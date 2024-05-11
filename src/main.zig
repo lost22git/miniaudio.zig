@@ -17,6 +17,7 @@ pub const std_options = .{
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer std.debug.assert(gpa.deinit() == .ok);
     const allocator = gpa.allocator();
 
     // read file path from commandline args
@@ -44,7 +45,7 @@ pub fn main() !void {
     // wait for instruction
     //
     while (true) {
-        try std.io.getStdOut().writer().print("Press ENTER to exit!\n", .{});
+        try std.io.getStdOut().writer().print("Press instruction:\n", .{});
         var buffer: [100]u8 = undefined;
         const ins = try readline(&buffer);
         var ins_tks = std.mem.tokenizeAny(u8, ins, " \t");
@@ -110,11 +111,10 @@ pub const Engine = struct {
     /// ```
     ///
     pub fn deinit(self: *Engine) void {
-        if (self.ma_engine != undefined) {
-            ma.ma_engine_uninit(self.ma_engine);
-            self.allocator.destroy(self.ma_engine);
-            self.ma_engine = undefined;
-        }
+        log.debug("deinit engine", .{});
+        ma.ma_engine_uninit(self.ma_engine);
+        self.allocator.destroy(self.ma_engine);
+        self.* = undefined;
     }
 };
 
@@ -185,12 +185,10 @@ pub const Sound = struct {
     /// ```
     ///
     pub fn deinit(self: *Sound) void {
-        if (self.ma_sound != undefined) {
-            ma.ma_sound_uninit(self.ma_sound);
-            self.engine.allocator.destroy(self.ma_sound);
-            self.ma_sound = undefined;
-            self.engine = undefined;
-        }
+        log.debug("deinit sound", .{});
+        ma.ma_sound_uninit(self.ma_sound);
+        self.engine.allocator.destroy(self.ma_sound);
+        self.* = undefined;
     }
 
     /// start playing
