@@ -1,0 +1,24 @@
+name: docs
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install Zig
+        uses: korandoru/setup-zig@v1
+      - name: Check out repository code
+        uses: actions/checkout@v4
+      - name: Generate documentation
+        run: zig build docs
+      - name: Deploy to GitHub Pages
+        if: success()
+        uses: crazy-max/ghaction-github-pages@v4
+        with:
+          target_branch: gh-pages
+          build_dir: zig-out/docs
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
