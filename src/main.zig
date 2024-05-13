@@ -72,19 +72,27 @@ pub fn main() !void {
 }
 
 fn printSoundInfo(sound: Sound) void {
-    const frame_rate = sound.engine.getFrameRate();
-    log.info("FRAME_RATE : {d}", .{frame_rate});
+    const frame_rate = sound.engine.getSampleRate();
 
     const nth_frame: u64 = sound.getNthFrame() catch 0;
     const total_frames: u64 = sound.getTotalFrames() catch 0;
-    log.info("FRAME      : {d}/{d}", .{ nth_frame, total_frames });
 
     const nth_millis: u64 = sound.getNthMillis() catch 0;
     const total_millis: u64 = sound.getTotalMillis() catch 0;
-    log.info("TIME(ms)   : {d}/{d}", .{ nth_millis, total_millis });
 
     const volume = sound.getVolume();
-    log.info("VOLUME     : {d}", .{volume});
+
+    const data_format = sound.getDataFormat() catch std.mem.zeroes(SoundDataFormat);
+
+    log.info(
+        \\
+        \\  FRAME_RATE : {d}
+        \\  FRAME      : {d}/{d}
+        \\  TIME(ms)   : {d}/{d}
+        \\  VOLUME     : {d}
+        \\  DATA_FORMAT: {any}
+        \\
+    , .{ frame_rate, nth_frame, total_frames, nth_millis, total_millis, volume, data_format });
 }
 
 fn readline(buf: []u8) ![]const u8 {
@@ -134,13 +142,13 @@ pub const Engine = struct {
         self.* = undefined;
     }
 
-    /// get frame rate
+    /// get sample rate per channel (aka. frame rate)
     ///
     /// ```
-    /// const frame_rate = engine.getFrameRate();
+    /// const sample_rate = engine.getSampleRate();
     /// ```
     ///
-    pub fn getFrameRate(self: Engine) u32 {
+    pub fn getSampleRate(self: Engine) u32 {
         return ma.ma_engine_get_sample_rate(self.ma_engine);
     }
 };
@@ -164,6 +172,22 @@ pub const SoundFlags = struct {
         }
         return result;
     }
+};
+
+pub const SampleFormat = enum(ma.ma_format) {
+    unknown = ma.ma_format_unknown,
+    u8 = ma.ma_format_u8,
+    s16 = ma.ma_format_s16,
+    s24 = ma.ma_format_s24,
+    s32 = ma.ma_format_s32,
+    f32 = ma.ma_format_f32,
+    count = ma.ma_format_count,
+};
+
+pub const SoundDataFormat = struct {
+    format: SampleFormat,
+    channels: u32,
+    sample_rate: u32, // sample rate per channel
 };
 
 pub const Sound = struct {
@@ -460,5 +484,19 @@ pub const Sound = struct {
             return error.MASoundGetLengthInSeconds;
         }
         return @intFromFloat(result * 1000);
+    }
+
+    /// get `SoundDataFormat`
+    ///
+    /// ```
+    /// const data_format = try sound.getDataFormat();
+    /// ```
+    ///
+    pub fn getDataFormat(self: Sound) !SoundDataFormat {
+        var result: SoundDataFormat = undefined;
+        if (ma.ma_sound_get_data_format(self.ma_sound, @ptrCast(&result.format), &result.channels, &result.sample_rate, null, 0) != ma.MA_SUCCESS) {
+            return error.MASoundGetDataFormat;
+        }
+        return result;
     }
 };
