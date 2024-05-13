@@ -9,6 +9,8 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    const strip = b.option(bool, "strip", "Strip the artifacts") orelse (optimize != .Debug);
+
     // configure and install exe
     //
     const exe = b.addExecutable(.{
@@ -16,6 +18,7 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path(main_file),
         .target = target,
         .optimize = optimize,
+        .strip = strip,
     });
     exe.addCSourceFile(.{ .file = .{
         .path = miniaudio_src_file,
@@ -60,31 +63,32 @@ pub fn build(b: *std.Build) void {
     //
     {
         const docs_step = b.step("docs", "Build the project documentation");
-        // const doc_obj = b.addObject(.{
-        //     .name = "docs",
-        //     .root_source_file = .{ .path = main_file },
-        //     .target = target,
-        //     .optimize = optimize,
-        // });
-        // doc_obj.addCSourceFile(.{ .file = .{
-        //     .path = miniaudio_src_file,
-        // }, .flags = &.{
-        //     "-fno-sanitize=undefined",
-        // } });
-        // doc_obj.addIncludePath(.{ .path = miniaudio_header_dir });
-        // doc_obj.linkLibC();
-        // if (target.result.os.tag == .linux) {
-        //     doc_obj.linkSystemLibrary("pthread");
-        //     doc_obj.linkSystemLibrary("m");
-        //     doc_obj.linkSystemLibrary("dl");
-        // }
         const install_docs = b.addInstallDirectory(.{
-            // .source_dir = doc_obj.getEmittedDocs(),
             .source_dir = exe.getEmittedDocs(),
             .install_dir = .prefix,
             .install_subdir = "docs/",
         });
         docs_step.dependOn(&install_docs.step);
+
+        // docs.com (requires curl,zip)
+        //
+        {
+            const docs_com_step = b.step("docscom", "Build docs.com (documentation http server powered by redbean.com)");
+
+            const download_redbean = b.addSystemCommand(&.{ "curl", "-fsSLo", "docs.com", "https://redbean.dev/redbean-2.2.com", "--ssl-no-revoke" });
+            download_redbean.has_side_effects = true;
+            download_redbean.setCwd(.{ .path = b.install_path });
+            download_redbean.expectExitCode(0);
+
+            const zip_docs_into_redbean = b.addSystemCommand(&.{ "zip", "-r", "docs.com", "docs" });
+            zip_docs_into_redbean.has_side_effects = true;
+            zip_docs_into_redbean.setCwd(.{ .path = b.install_path });
+            zip_docs_into_redbean.expectExitCode(0);
+            zip_docs_into_redbean.step.dependOn(&download_redbean.step);
+
+            docs_com_step.dependOn(docs_step);
+            docs_com_step.dependOn(&zip_docs_into_redbean.step);
+        }
     }
 
     // clean
