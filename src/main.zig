@@ -193,7 +193,6 @@ pub const SoundDataFormat = struct {
 pub const Sound = struct {
     engine: *Engine,
     ma_sound: *ma.ma_sound,
-    volume: f32,
     volume_before_mute: f32 = 5.0,
 
     /// init
@@ -217,14 +216,9 @@ pub const Sound = struct {
         }
         errdefer ma.ma_sound_uninit(ma_sound);
 
-        // get volume
-        //
-        const volume = ma.ma_sound_get_volume(ma_sound);
-
         return Sound{
             .ma_sound = ma_sound,
             .engine = engine,
-            .volume = volume,
         };
     }
 
