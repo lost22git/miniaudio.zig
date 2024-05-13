@@ -45,7 +45,7 @@ pub fn main() !void {
     // wait for instruction
     //
     while (true) {
-        try std.io.getStdOut().writer().print("Press instruction:\n", .{});
+        try std.io.getStdOut().writer().print("Press instruction: ", .{});
         var buffer: [100]u8 = undefined;
         const ins = try readline(&buffer);
         var ins_tks = std.mem.tokenizeAny(u8, ins, " \t");
@@ -62,12 +62,29 @@ pub fn main() !void {
                 },
                 // 'l' => // set loop spot,
                 'L' => sound.loop(),
+                'i' => printSoundInfo(sound),
                 else => continue,
             }
         } else {
             continue;
         }
     }
+}
+
+fn printSoundInfo(sound: Sound) void {
+    const frame_rate = sound.engine.getFrameRate();
+    log.info("FRAME_RATE : {d}", .{frame_rate});
+
+    const nth_frame: u64 = sound.getNthFrame() catch 0;
+    const total_frames: u64 = sound.getTotalFrames() catch 0;
+    log.info("FRAME      : {d}/{d}", .{ nth_frame, total_frames });
+
+    const nth_millis: u64 = sound.getNthMillis() catch 0;
+    const total_millis: u64 = sound.getTotalMillis() catch 0;
+    log.info("TIME(ms)   : {d}/{d}", .{ nth_millis, total_millis });
+
+    const volume = sound.getVolume();
+    log.info("VOLUME     : {d}", .{volume});
 }
 
 fn readline(buf: []u8) ![]const u8 {
@@ -115,6 +132,16 @@ pub const Engine = struct {
         ma.ma_engine_uninit(self.ma_engine);
         self.allocator.destroy(self.ma_engine);
         self.* = undefined;
+    }
+
+    /// get frame rate
+    ///
+    /// ```
+    /// const frame_rate = engine.getFrameRate();
+    /// ```
+    ///
+    pub fn getFrameRate(self: Engine) u32 {
+        return ma.ma_engine_get_sample_rate(self.ma_engine);
     }
 };
 
@@ -263,6 +290,16 @@ pub const Sound = struct {
         }
     }
 
+    /// get volume
+    ///
+    /// ```
+    /// const volume = sound.getVolume();
+    /// ```
+    ///
+    pub fn getVolume(self: Sound) f32 {
+        return ma.ma_sound_get_volume(self.ma_sound);
+    }
+
     /// check `mute` if enabled
     ///
     /// ```
@@ -272,7 +309,7 @@ pub const Sound = struct {
     /// ```
     ///
     pub fn muting(self: Sound) bool {
-        return ma.ma_sound_get_volume(self.ma_sound) == 0;
+        return self.getVolume() == 0;
     }
 
     /// toggle `mute`
@@ -286,7 +323,7 @@ pub const Sound = struct {
     /// ```
     ///
     pub fn mute(self: *Sound) void {
-        const volume = ma.ma_sound_get_volume(self.ma_sound);
+        const volume = self.getVolume();
 
         if (volume == 0) {
             // unmount
@@ -309,8 +346,7 @@ pub const Sound = struct {
     pub fn setVolume(self: *Sound, volume: f32) void {
         const safe_volume = @max(0.0, @min(volume, 50.0));
         ma.ma_sound_set_volume(self.ma_sound, safe_volume);
-        self.volume = ma.ma_sound_get_volume(self.ma_sound);
-        log.info("VOLUME: {d}", .{self.volume});
+        log.info("VOLUME: {d}", .{safe_volume});
     }
 
     /// increment volume
@@ -321,7 +357,7 @@ pub const Sound = struct {
     /// ```
     ///
     pub fn incVolume(self: *Sound, delta: f32) void {
-        const volume = self.volume + delta;
+        const volume = self.getVolume() + delta;
         self.setVolume(volume);
     }
 
@@ -365,8 +401,64 @@ pub const Sound = struct {
     ///
     pub fn gotoNthSecond(self: Sound, nth: u32) !void {
         log.info("GOTO: {d}s", .{nth});
-        ma.ma_sound_set_start_time_in_milliseconds(self.ma_sound, nth * 1000);
         try self.stop();
+        ma.ma_sound_set_start_time_in_milliseconds(self.ma_sound, nth * 1000);
         try self.start();
+    }
+
+    /// get nth frame
+    ///
+    /// ```
+    /// const nth_frame = try sound.getNthFrame();
+    /// ```
+    ///
+    pub fn getNthFrame(self: Sound) !u64 {
+        var result: u64 = undefined;
+        if (ma.ma_sound_get_cursor_in_pcm_frames(self.ma_sound, &result) != ma.MA_SUCCESS) {
+            return error.MASoundGetCursorInPcmFrames;
+        }
+        return result;
+    }
+
+    /// get nth milliseconds
+    ///
+    /// ```
+    /// const nth_millis = try sound.getNthMillis();
+    /// ```
+    ///
+    pub fn getNthMillis(self: Sound) !u32 {
+        var result: f32 = undefined;
+        if (ma.ma_sound_get_cursor_in_seconds(self.ma_sound, &result) != ma.MA_SUCCESS) {
+            return error.MASoundGetCursorInSeconds;
+        }
+        return @intFromFloat(result * 1000);
+    }
+
+    /// get total frames
+    ///
+    /// ```
+    /// const total_frames = try sound.getTotalFrames();
+    /// ```
+    ///
+    pub fn getTotalFrames(self: Sound) !u64 {
+        var result: u64 = undefined;
+        if (ma.ma_sound_get_length_in_pcm_frames(self.ma_sound, &result) != ma.MA_SUCCESS) {
+            return error.MASoundGetLengthInPcmFrames;
+        }
+        return result;
+    }
+
+    /// get total milliseconds
+    ///
+    /// ```
+    /// const total_millis = try sound.getTotalMillis();
+    /// ```
+    ///
+    pub fn getTotalMillis(self: Sound) !u32 {
+        var result: f32 = undefined;
+        if (ma.ma_sound_get_length_in_seconds(self.ma_sound, &result) != ma.MA_SUCCESS) {
+            return error.MASoundGetLengthInSeconds;
+        }
+        return @intFromFloat(result * 1000);
     }
 };

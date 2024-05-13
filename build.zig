@@ -109,4 +109,18 @@ pub fn build(b: *std.Build) void {
             }
         }
     }
+
+    // lints
+    //
+    {
+        const lints_step = b.step("lints", "Run lints");
+
+        const lints = b.addFmt(.{
+            .paths = &.{ "src", "build.zig" },
+            .check = true,
+        });
+
+        lints_step.dependOn(&lints.step);
+        b.default_step.dependOn(lints_step);
+    }
 }
