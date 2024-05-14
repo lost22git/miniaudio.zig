@@ -1,8 +1,15 @@
 const std = @import("std");
+const debug = std.debug;
 const builtin = @import("builtin");
 const log = std.log;
+const fmt = std.fmt;
+const mem = std.mem;
+const heap = std.heap;
+const process = std.process;
+const io = std.io;
 
 const Allocator = std.mem.Allocator;
+const TokenIterator = std.mem.TokenIterator;
 
 const ma = @cImport({
     @cInclude("miniaudio.h");
@@ -16,13 +23,13 @@ pub const std_options = .{
 };
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer std.debug.assert(gpa.deinit() == .ok);
+    var gpa = heap.GeneralPurposeAllocator(.{}){};
+    defer debug.assert(gpa.deinit() == .ok);
     const allocator = gpa.allocator();
 
     // read file path from commandline args
     //
-    var args = try std.process.argsWithAllocator(allocator);
+    var args = try process.argsWithAllocator(allocator);
     defer args.deinit();
     _ = args.next();
     const sound_file_path = args.next() orelse return error.ArgsNotFound;
@@ -45,10 +52,10 @@ pub fn main() !void {
     // wait for instruction
     //
     while (true) {
-        try std.io.getStdOut().writer().print("Press instruction: ", .{});
+        try io.getStdOut().writer().print("Press instruction: ", .{});
         var buffer: [100]u8 = undefined;
         const ins = try readline(&buffer);
-        var ins_tks = std.mem.tokenizeAny(u8, ins, " \t");
+        var ins_tks = mem.tokenizeAny(u8, ins, " \t");
         if (ins_tks.next()) |tk| {
             switch (tk[0]) {
                 'q' => break,
@@ -56,10 +63,8 @@ pub fn main() !void {
                 'm' => sound.mute(),
                 '0' => sound.incVolume(5.0),
                 '9' => sound.incVolume(-5.0),
-                'g' => {
-                    const nth_second = ins_tks.next() orelse continue;
-                    try sound.gotoNthSecond(try std.fmt.parseInt(u32, nth_second, 10));
-                },
+                'g' => gotoNextNthSecond(sound, &ins_tks),
+                'G' => gotoNthSecond(sound, &ins_tks),
                 // 'l' => // set loop spot,
                 'L' => sound.loop(),
                 'i' => printSoundInfo(sound),
@@ -71,8 +76,78 @@ pub fn main() !void {
     }
 }
 
+fn gotoNextNthSecond(sound: Sound, ins_tks: *TokenIterator(u8, .any)) void {
+    const time_str = ins_tks.next() orelse return;
+    const offset = fmt.parseInt(i64, time_str, 10) catch return;
+    sound.gotoNextNthSecond(offset) catch return;
+}
+
+fn gotoNthSecond(sound: Sound, ins_tks: *TokenIterator(u8, .any)) void {
+    const time_str = ins_tks.next() orelse return;
+    const nth_second = parseSeconds(time_str) catch return;
+    sound.gotoNthSecond(nth_second) catch return;
+}
+
+fn parseSeconds(time_str: []const u8) !u32 {
+    var tks = mem.tokenizeScalar(u8, time_str, ':');
+    const a = try parseIntForTime(tks.next() orelse return error.ParseSeconds);
+    const b = tks.next();
+    const c = tks.next();
+
+    // 01:01:01
+    //
+    if (c) |second| {
+        const nth_hour = a;
+        if (nth_hour > 23) return error.ParseSeconds;
+        const nth_minute = try parseIntForTime(b.?);
+        if (nth_minute > 59) return error.ParseTimeAsSeconds;
+        const nth_second = try parseIntForTime(second);
+        if (nth_second > 59) return error.ParseTimeAsSeconds;
+        return nth_hour * 60 * 60 + nth_minute * 60 + nth_second;
+    } else {
+        // 01:01
+        //
+        if (b) |second| {
+            const nth_minute = a;
+            if (nth_minute > 59) return error.ParseSeconds;
+            const nth_second = try parseIntForTime(second);
+            return nth_minute * 60 + nth_second;
+        }
+        // 01
+        //
+        else {
+            const nth_second = a;
+            return nth_second;
+        }
+    }
+}
+
+/// "01" -> 1
+///
+fn parseIntForTime(time_str: []const u8) !u32 {
+    const valid_time_str = try getValidSliceForTime(time_str);
+    return try fmt.parseInt(u32, valid_time_str, 10);
+}
+
+/// "01" -> "1"
+///
+fn getValidSliceForTime(time_str: []const u8) ![]const u8 {
+    switch (time_str.len) {
+        1 => return time_str,
+        2 => {
+            if (time_str[0] == '0') {
+                return time_str[1..];
+            } else {
+                return time_str;
+            }
+        },
+        else => return error.GetValidSliceForTime,
+    }
+}
+
 fn printSoundInfo(sound: Sound) void {
     const frame_rate = sound.engine.getSampleRate();
+    const channels = sound.engine.getChannels();
 
     const nth_frame: u64 = sound.getNthFrame() catch 0;
     const total_frames: u64 = sound.getTotalFrames() catch 0;
@@ -82,25 +157,26 @@ fn printSoundInfo(sound: Sound) void {
 
     const volume = sound.getVolume();
 
-    const data_format = sound.getDataFormat() catch std.mem.zeroes(SoundDataFormat);
+    const data_format = sound.getDataFormat() catch mem.zeroes(SoundDataFormat);
 
     log.info(
         \\
-        \\  FRAME_RATE : {d}
-        \\  FRAME      : {d}/{d}
-        \\  TIME(ms)   : {d}/{d}
         \\  VOLUME     : {d}
+        \\  TIME(ms)   : {d} / {d}
+        \\  FRAME      : {d} / {d}
+        \\  FRAME_RATE : {d}
+        \\  CHANNELS   : {d}
         \\  DATA_FORMAT: {any}
         \\
-    , .{ frame_rate, nth_frame, total_frames, nth_millis, total_millis, volume, data_format });
+    , .{ volume, nth_millis, total_millis, nth_frame, total_frames, frame_rate, channels, data_format });
 }
 
 fn readline(buf: []u8) ![]const u8 {
-    return trimBlanks(try std.io.getStdIn().reader().readUntilDelimiter(buf, '\n'));
+    return trimBlanks(try io.getStdIn().reader().readUntilDelimiter(buf, '\n'));
 }
 
 fn trimBlanks(buf: []const u8) []const u8 {
-    return std.mem.trim(u8, buf, " \t\r\n");
+    return mem.trim(u8, buf, " \t\r\n");
 }
 
 pub const Engine = struct {
@@ -150,6 +226,16 @@ pub const Engine = struct {
     ///
     pub fn getSampleRate(self: Engine) u32 {
         return ma.ma_engine_get_sample_rate(self.ma_engine);
+    }
+
+    /// get channels
+    ///
+    /// ```
+    /// const channels = engine.getChannels();
+    /// ```
+    ///
+    pub fn getChannels(self: Engine) u32 {
+        return ma.ma_engine_get_channels(self.ma_engine);
     }
 };
 
@@ -411,7 +497,7 @@ pub const Sound = struct {
         }
     }
 
-    /// goto `nth second` to play
+    /// goto `nth second`
     ///
     /// ```
     /// try sound.gotoNthSecond(5);
@@ -419,9 +505,51 @@ pub const Sound = struct {
     ///
     pub fn gotoNthSecond(self: Sound, nth: u32) !void {
         log.info("GOTO: {d}s", .{nth});
-        try self.stop();
-        ma.ma_sound_set_start_time_in_milliseconds(self.ma_sound, nth * 1000);
-        try self.start();
+        const nth_frame = nth * self.engine.getSampleRate();
+        try self.gotoNthFrame(nth_frame);
+    }
+
+    /// goto `nth frame`
+    ///
+    /// ```
+    /// try sound.gotoNthFrame(1000);
+    /// ```
+    ///
+    pub fn gotoNthFrame(self: Sound, nth: u64) !void {
+        log.info("GOTO_FRAME: {d}", .{nth});
+        if (ma.ma_sound_seek_to_pcm_frame(self.ma_sound, nth) != ma.MA_SUCCESS) {
+            return error.MASoundSeekToPcmFrame;
+        }
+    }
+
+    /// go to next seconds if `offset` is positive
+    /// go to prev seconds if `offset` is negative
+    ///
+    /// ```
+    /// try sound.gotoNextNthSecond(-10);
+    /// try sound.gotoNextNthSecond(10);
+    /// ```
+    ///
+    pub fn gotoNextNthSecond(self: Sound, offset: i64) !void {
+        log.info("GOTO_NEXT: {d}s", .{offset});
+        try self.gotoNextNthFrame(offset * @as(i64, @intCast(self.engine.getSampleRate())));
+    }
+
+    /// go to next frames if `offset` is positive
+    /// go to prev frames if `offset` is negative
+    ///
+    /// ```
+    /// try sound.gotoNextNthFrame(-10);
+    /// try sound.gotoNextNthFrame(10);
+    /// ```
+    ///
+    pub fn gotoNextNthFrame(self: Sound, offset: i64) !void {
+        const nth_frame = try self.getNthFrame();
+        const nth_frame_to_go = if (offset >= 0)
+            nth_frame +| @as(u64, @intCast(offset))
+        else
+            nth_frame -| @as(u64, @intCast(@abs(offset)));
+        try self.gotoNthFrame(nth_frame_to_go);
     }
 
     /// get nth frame
