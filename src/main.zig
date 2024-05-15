@@ -42,7 +42,7 @@ pub fn main() !void {
 
     // sound init
     //
-    var sound = try Sound.init(&engine, sound_file_path, .{ .streaming = true, .predecode = false });
+    var sound = try Sound.init(&engine, sound_file_path, .{ .streaming = true, .predecode = false, .pitch = true });
     defer sound.deinit();
 
     // sound start
@@ -246,6 +246,9 @@ pub const SoundFlags = struct {
     /// 预先解码，解码完再开始播放
     predecode: bool = false,
 
+    /// 如果声音不需要多普勒或音调偏移，请考虑通过使用 MA_SOUND_FLAG_NO_PITCH 标志初始化声音来禁用音调。
+    pitch: bool = true,
+
     /// convert to miniaudio sound flags value
     ///
     pub fn toMASoundFlags(self: SoundFlags) ma.ma_uint32 {
@@ -255,6 +258,9 @@ pub const SoundFlags = struct {
         }
         if (self.predecode) {
             result |= ma.MA_SOUND_FLAG_DECODE;
+        }
+        if (!self.pitch) {
+            result |= ma.MA_SOUND_FLAG_NO_PITCH;
         }
         return result;
     }
