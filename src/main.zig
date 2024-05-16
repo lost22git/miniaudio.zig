@@ -3,6 +3,7 @@ const debug = std.debug;
 const builtin = @import("builtin");
 const log = std.log;
 const fmt = std.fmt;
+const time = std.time;
 const mem = std.mem;
 const heap = std.heap;
 const process = std.process;
@@ -65,15 +66,25 @@ pub fn main() !void {
                 '9' => sound.incVolume(-5.0),
                 'g' => gotoNextNthSecond(sound, &ins_tks),
                 'G' => gotoNthSecond(sound, &ins_tks),
-                // 'l' => // set loop spot,
+                'l' => setLoopPoint(sound, &ins_tks),
                 'L' => sound.loop(),
-                'i' => printSoundInfo(sound),
+                'i' => printInfo(sound),
                 else => continue,
             }
         } else {
             continue;
         }
     }
+}
+
+fn setLoopPoint(sound: Sound, ins_tks: *TokenIterator(u8, .any)) void {
+    const begin_time_str = ins_tks.next() orelse return;
+    const end_time_str = ins_tks.next() orelse return;
+
+    const begin_second = parseSeconds(begin_time_str) catch return;
+    const end_second = parseSeconds(end_time_str) catch return;
+
+    sound.setLoopPointInSecond(begin_second, end_second) catch return;
 }
 
 fn gotoNextNthSecond(sound: Sound, ins_tks: *TokenIterator(u8, .any)) void {
@@ -145,7 +156,7 @@ fn getValidSliceForTime(time_str: []const u8) ![]const u8 {
     }
 }
 
-fn printSoundInfo(sound: Sound) void {
+fn printInfo(sound: Sound) void {
     const frame_rate = sound.engine.getSampleRate();
     const channels = sound.engine.getChannels();
 
@@ -155,20 +166,40 @@ fn printSoundInfo(sound: Sound) void {
     const nth_millis: u64 = sound.getNthMillis() catch 0;
     const total_millis: u64 = sound.getTotalMillis() catch 0;
 
-    const volume = sound.getVolume();
-
     const data_format = sound.getDataFormat() catch mem.zeroes(SoundDataFormat);
+
+    const volume = sound.getVolume();
+    const muting = if (sound.muting()) "yes" else "no";
+    const playing = if (sound.playing()) "yes" else "no";
+    const looping = if (sound.looping()) "yes" else "no";
 
     log.info(
         \\
-        \\  VOLUME     : {d}
+        \\  TIME       : {} / {}
         \\  TIME(ms)   : {d} / {d}
         \\  FRAME      : {d} / {d}
         \\  FRAME_RATE : {d}
         \\  CHANNELS   : {d}
         \\  DATA_FORMAT: {any}
-        \\
-    , .{ volume, nth_millis, total_millis, nth_frame, total_frames, frame_rate, channels, data_format });
+        \\  VOLUME     : {d}
+        \\  MUTING     : {s}
+        \\  PLAYING    : {s}
+        \\  LOOPING    : {s}
+    , .{
+        fmt.fmtDuration(nth_millis * time.ns_per_ms),
+        fmt.fmtDuration(total_millis * time.ns_per_ms),
+        nth_millis,
+        total_millis,
+        nth_frame,
+        total_frames,
+        frame_rate,
+        channels,
+        data_format,
+        volume,
+        muting,
+        playing,
+        looping,
+    });
 }
 
 fn readline(buf: []u8) ![]const u8 {
@@ -503,6 +534,34 @@ pub const Sound = struct {
         }
     }
 
+    /// set loop point in second
+    ///
+    /// ```
+    /// sound.setLoopPointInSecond(100, 200);
+    /// ```
+    ///
+    pub fn setLoopPointInSecond(self: Sound, begin: u32, end: u32) !void {
+        log.info("LOOP_POINT: {d}-{d}s", .{ begin, end });
+        const sample_rate: u64 = @intCast(self.engine.getSampleRate());
+        const begin_frame = @as(u64, @intCast(begin)) * sample_rate;
+        const end_frame = @as(u64, @intCast(end)) * sample_rate;
+        try self.setLoopPointInFrame(begin_frame, end_frame);
+    }
+
+    /// set loop point in frames
+    ///
+    /// ```
+    /// try sound.setLoopPoint(100, 200);
+    /// ```
+    ///
+    pub fn setLoopPointInFrame(self: Sound, begin: u64, end: u64) !void {
+        log.info("LOOP_POINT_FRAME: {d}-{d}", .{ begin, end });
+        const data_source = ma.ma_sound_get_data_source(self.ma_sound) orelse return error.MASoundGetDataSource;
+        if (ma.ma_data_source_set_loop_point_in_pcm_frames(data_source, begin, end) != ma.MA_SUCCESS) {
+            return error.MADataSouceSetLoopPointInPcmFrames;
+        }
+    }
+
     /// goto `nth second`
     ///
     /// ```
@@ -511,7 +570,7 @@ pub const Sound = struct {
     ///
     pub fn gotoNthSecond(self: Sound, nth: u32) !void {
         log.info("GOTO: {d}s", .{nth});
-        const nth_frame = nth * self.engine.getSampleRate();
+        const nth_frame: u64 = @as(u64, @intCast(nth)) * @as(u64, @intCast(self.engine.getSampleRate()));
         try self.gotoNthFrame(nth_frame);
     }
 
