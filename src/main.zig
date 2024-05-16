@@ -62,8 +62,8 @@ pub fn main() !void {
                 'q' => break,
                 'p' => try sound.pauseOrResume(),
                 'm' => sound.mute(),
-                '0' => sound.incVolume(5.0),
-                '9' => sound.incVolume(-5.0),
+                '0' => sound.incVolume(0.1),
+                '9' => sound.incVolume(-0.1),
                 'g' => gotoNextNthSecond(sound, &ins_tks),
                 'G' => gotoNthSecond(sound, &ins_tks),
                 'l' => setLoopPoint(sound, &ins_tks),
@@ -71,12 +71,19 @@ pub fn main() !void {
                 'i' => printInfo(sound),
                 'j' => setPitch(sound, &ins_tks),
                 'k' => setPan(sound, &ins_tks),
+                'v' => setVolume(sound, &ins_tks),
                 else => continue,
             }
         } else {
             continue;
         }
     }
+}
+
+fn setVolume(sound: Sound, ins_tks: *TokenIterator(u8, .any)) void {
+    const volume_str = ins_tks.next() orelse return;
+    const volume = fmt.parseFloat(f32, volume_str) catch return;
+    sound.setVolume(volume);
 }
 
 fn setPitch(sound: Sound, ins_tks: *TokenIterator(u8, .any)) void {
@@ -182,9 +189,9 @@ fn printInfo(sound: Sound) void {
     const data_format = sound.getDataFormat() catch mem.zeroes(SoundDataFormat);
 
     const volume = sound.getVolume();
-    const muting = if (sound.muting()) "yes" else "no";
-    const playing = if (sound.playing()) "yes" else "no";
-    const looping = if (sound.looping()) "yes" else "no";
+    const muting = if (sound.isMuted()) "yes" else "no";
+    const playing = if (sound.isPlaying()) "yes" else "no";
+    const looping = if (sound.isLooping()) "yes" else "no";
 
     const pitch = sound.getPitch();
     const pan = sound.getPan();
@@ -294,10 +301,10 @@ pub const SoundFlags = struct {
     ///
     streaming: bool = true,
 
-    /// predecode before loading into memory
+    /// predecode before loading into memory (invalid when streaming is true)
     predecode: bool = false,
 
-    /// 如果声音不需要多普勒或音调偏移，请考虑通过使用 MA_SOUND_FLAG_NO_PITCH 标志初始化声音来禁用音调。
+    /// enable pitch
     pitch: bool = true,
 
     /// convert to miniaudio sound flags value
@@ -419,15 +426,15 @@ pub const Sound = struct {
         return ma.ma_sound_at_end(self.ma_sound) != 0;
     }
 
-    /// check if playing
+    /// check if is playing
     ///
     /// ```
-    /// if(sound.playing()) {
+    /// if(sound.isPlaying()) {
     ///     ...
     /// }
     /// ```
     ///
-    pub fn playing(self: Sound) bool {
+    pub fn isPlaying(self: Sound) bool {
         return ma.ma_sound_is_playing(self.ma_sound) != 0;
     }
 
@@ -442,7 +449,7 @@ pub const Sound = struct {
     /// ```
     ////
     pub fn pauseOrResume(self: Sound) !void {
-        if (self.playing()) {
+        if (self.isPlaying()) {
             log.info("PAUSE", .{});
             try self.stop();
         } else {
@@ -451,7 +458,7 @@ pub const Sound = struct {
         }
     }
 
-    /// get volume
+    /// get volume [0.0, 1.0]
     ///
     /// ```
     /// const volume = sound.getVolume();
@@ -461,15 +468,39 @@ pub const Sound = struct {
         return ma.ma_sound_get_volume(self.ma_sound);
     }
 
-    /// check `mute` if enabled
+    /// set volume [0.0, 1.0]
     ///
     /// ```
-    /// if (sound.muting()) {
+    /// sound.setVolume(1.0);
+    /// ```
+    ///
+    pub fn setVolume(self: Sound, volume: f32) void {
+        const safe_volume = @max(0.0, @min(volume, 1.0));
+        ma.ma_sound_set_volume(self.ma_sound, safe_volume);
+        log.info("VOLUME: {d}", .{safe_volume});
+    }
+
+    /// increment volume [-1.0, 1.0]
+    ///
+    /// ```
+    /// sound.incVolume(0.2);
+    /// sound.incVolume(-0.2);
+    /// ```
+    ///
+    pub fn incVolume(self: Sound, delta: f32) void {
+        const volume = self.getVolume() + delta;
+        self.setVolume(volume);
+    }
+
+    /// check if is muted
+    ///
+    /// ```
+    /// if (sound.isMuted()) {
     ///     ...
     /// }
     /// ```
     ///
-    pub fn muting(self: Sound) bool {
+    pub fn isMuted(self: Sound) bool {
         return self.getVolume() == 0;
     }
 
@@ -498,31 +529,7 @@ pub const Sound = struct {
         }
     }
 
-    /// set volume
-    ///
-    /// ```
-    /// sound.setVolume(5.0);
-    /// ```
-    ///
-    pub fn setVolume(self: *Sound, volume: f32) void {
-        const safe_volume = @max(0.0, @min(volume, 50.0));
-        ma.ma_sound_set_volume(self.ma_sound, safe_volume);
-        log.info("VOLUME: {d}", .{safe_volume});
-    }
-
-    /// increment volume
-    ///
-    /// ```
-    /// sound.incVolume(5.0);
-    /// sound.incVolume(-5.0);
-    /// ```
-    ///
-    pub fn incVolume(self: *Sound, delta: f32) void {
-        const volume = self.getVolume() + delta;
-        self.setVolume(volume);
-    }
-
-    /// check `looping` enabled
+    /// check if is looping
     ///
     /// ```
     /// if(sound.looping()) {
@@ -530,7 +537,7 @@ pub const Sound = struct {
     /// }
     /// ```
     ///
-    pub fn looping(self: Sound) bool {
+    pub fn isLooping(self: Sound) bool {
         return ma.ma_sound_is_looping(self.ma_sound) != 0;
     }
 
@@ -545,7 +552,7 @@ pub const Sound = struct {
     /// ```
     ///
     pub fn loop(self: Sound) void {
-        if (self.looping()) {
+        if (self.isLooping()) {
             log.info("UNLOOP", .{});
             ma.ma_sound_set_looping(self.ma_sound, 0);
         } else {
