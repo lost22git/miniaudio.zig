@@ -69,12 +69,25 @@ pub fn main() !void {
                 'l' => setLoopPoint(sound, &ins_tks),
                 'L' => sound.loop(),
                 'i' => printInfo(sound),
+                'j' => setPitch(sound, &ins_tks),
+                'k' => setPan(sound, &ins_tks),
                 else => continue,
             }
         } else {
             continue;
         }
     }
+}
+
+fn setPitch(sound: Sound, ins_tks: *TokenIterator(u8, .any)) void {
+    const pitch_str = ins_tks.next() orelse return;
+    const pitch = fmt.parseFloat(f32, pitch_str) catch return;
+    sound.setPitch(pitch);
+}
+fn setPan(sound: Sound, ins_tks: *TokenIterator(u8, .any)) void {
+    const pan_str = ins_tks.next() orelse return;
+    const pan = fmt.parseFloat(f32, pan_str) catch return;
+    sound.setPan(pan);
 }
 
 fn setLoopPoint(sound: Sound, ins_tks: *TokenIterator(u8, .any)) void {
@@ -173,6 +186,9 @@ fn printInfo(sound: Sound) void {
     const playing = if (sound.playing()) "yes" else "no";
     const looping = if (sound.looping()) "yes" else "no";
 
+    const pitch = sound.getPitch();
+    const pan = sound.getPan();
+
     log.info(
         \\
         \\  TIME       : {} / {}
@@ -181,6 +197,8 @@ fn printInfo(sound: Sound) void {
         \\  FRAME_RATE : {d}
         \\  CHANNELS   : {d}
         \\  DATA_FORMAT: {any}
+        \\  PAN        : {d}
+        \\  PITCH      : {d}
         \\  VOLUME     : {d}
         \\  MUTING     : {s}
         \\  PLAYING    : {s}
@@ -195,6 +213,8 @@ fn printInfo(sound: Sound) void {
         frame_rate,
         channels,
         data_format,
+        pan,
+        pitch,
         volume,
         muting,
         playing,
@@ -274,7 +294,7 @@ pub const SoundFlags = struct {
     ///
     streaming: bool = true,
 
-    /// 预先解码，解码完再开始播放
+    /// predecode before loading into memory
     predecode: bool = false,
 
     /// 如果声音不需要多普勒或音调偏移，请考虑通过使用 MA_SOUND_FLAG_NO_PITCH 标志初始化声音来禁用音调。
@@ -685,5 +705,47 @@ pub const Sound = struct {
             return error.MASoundGetDataFormat;
         }
         return result;
+    }
+
+    /// get pitch [0.0, ?] (1.0 by default)
+    ///
+    /// ```
+    /// const pitch = sound.getPitch();
+    ///```
+    ///
+    pub fn getPitch(self: Sound) f32 {
+        return ma.ma_sound_get_pitch(self.ma_sound);
+    }
+
+    /// set pitch [0.0, ?] (1.0 by default)
+    ///
+    /// ```
+    /// sound.setPitch(1.0);
+    /// ```
+    ///
+    pub fn setPitch(self: Sound, pitch: f32) void {
+        log.info("PITCH: {d}", .{pitch});
+        ma.ma_sound_set_pitch(self.ma_sound, pitch);
+    }
+
+    /// get pan [-1.0, 1.0] (0.0 by default)
+    ///
+    /// ```
+    /// const pan = sound.getPan();
+    /// ```
+    ///
+    pub fn getPan(self: Sound) f32 {
+        return ma.ma_sound_get_pan(self.ma_sound);
+    }
+
+    /// set pan [-1.0, 1.0] (0.0 by default)
+    ///
+    /// ```
+    /// sound.setPan(1.0);
+    /// ```
+    ///
+    pub fn setPan(self: Sound, pan: f32) void {
+        log.info("PAN: {d}", .{pan});
+        ma.ma_sound_set_pan(self.ma_sound, pan);
     }
 };
