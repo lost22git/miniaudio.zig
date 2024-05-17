@@ -5,6 +5,22 @@ const miniaudio_src_file = "src/c/miniaudio.c";
 const main_file = "src/main.zig";
 const test_file = "src/main.zig";
 
+fn compileMiniaudio(exe: *std.Build.Step.Compile) void {
+    exe.addCSourceFile(.{ .file = .{
+        .path = miniaudio_src_file,
+    }, .flags = &.{
+        "-fno-sanitize=undefined",
+    } });
+    exe.addIncludePath(.{ .path = miniaudio_header_dir });
+    exe.linkLibC();
+
+    if (exe.rootModuleTarget().os.tag == .linux) {
+        exe.linkSystemLibrary("pthread");
+        exe.linkSystemLibrary("m");
+        exe.linkSystemLibrary("dl");
+    }
+}
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
@@ -20,18 +36,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .strip = strip,
     });
-    exe.addCSourceFile(.{ .file = .{
-        .path = miniaudio_src_file,
-    }, .flags = &.{
-        "-fno-sanitize=undefined",
-    } });
-    exe.addIncludePath(.{ .path = miniaudio_header_dir });
-    exe.linkLibC();
-    if (target.result.os.tag == .linux) {
-        exe.linkSystemLibrary("pthread");
-        exe.linkSystemLibrary("m");
-        exe.linkSystemLibrary("dl");
-    }
+    compileMiniaudio(exe);
     b.installArtifact(exe);
 
     // run
@@ -55,6 +60,7 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
         });
+        compileMiniaudio(unit_tests);
         const run_unit_tests = b.addRunArtifact(unit_tests);
         test_step.dependOn(&run_unit_tests.step);
     }

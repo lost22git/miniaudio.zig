@@ -10,7 +10,9 @@ const process = std.process;
 const io = std.io;
 
 const Allocator = std.mem.Allocator;
+const ArenaAllocator = std.heap.ArenaAllocator;
 const TokenIterator = std.mem.TokenIterator;
+const ArrayList = std.ArrayList;
 
 const ma = @cImport({
     @cInclude("miniaudio.h");
@@ -72,11 +74,52 @@ pub fn main() !void {
                 'j' => setPitch(sound, &ins_tks),
                 'k' => setPan(sound, &ins_tks),
                 'v' => setVolume(sound, &ins_tks),
+                'd' => printDeviceInfoList(allocator),
                 else => continue,
             }
         } else {
             continue;
         }
+    }
+}
+
+fn printDeviceInfoList(allocator: Allocator) void {
+    var context = Context.init(allocator) catch return;
+    defer context.deinit();
+
+    var device_info_list = context.getDeviceInfoList(5) catch return;
+    defer device_info_list.deinit();
+
+    for (device_info_list.playbacks.items) |dev| {
+        // const id_str = try dev.idStr(allocator);
+        // defer allocator.free(id_str);
+        const id_str = "";
+
+        log.info(
+            \\
+            \\ PLAYBACK
+            \\     id                  : {any}
+            \\     id(string)          : {s}
+            \\     name                : {s}
+            \\     is_default          : {any}
+            \\     native_data_formats : {any}
+        , .{ dev.id, id_str, dev.name, dev.is_default, dev.native_data_formats });
+    }
+
+    for (device_info_list.captures.items) |dev| {
+        // const id_str = try dev.idStr(allocator);
+        // defer allocator.free(id_str);
+        const id_str = "";
+
+        log.info(
+            \\
+            \\ CAPTURE
+            \\     id                  : {any}
+            \\     id(string)          : {s}
+            \\     name                : {s}
+            \\     is_default          : {any}
+            \\     native_data_formats : {any}
+        , .{ dev.id, id_str, dev.name, dev.is_default, dev.native_data_formats });
     }
 }
 
@@ -756,3 +799,233 @@ pub const Sound = struct {
         ma.ma_sound_set_pan(self.ma_sound, pan);
     }
 };
+
+pub const DeviceDataFormat = struct {
+    format: SampleFormat,
+    channels: u32,
+    sample_rate: u32,
+    flags: u32,
+};
+
+pub const DeviceInfo = struct {
+    id: ma.ma_device_id,
+    name: []const u8,
+    is_default: bool,
+    native_data_formats: []DeviceDataFormat,
+
+    // pub fn idStr(self: DeviceInfo, allocator: Allocator) ![]const u8 {
+    //     // wasapi: [64]ma_wchar_win32,
+    //     // dsound: [16]ma_uint8,
+    //     // winmm: ma_uint32,
+    //     // alsa: [256]u8,
+    //     // pulse: [256]u8,
+    //     // jack: c_int,
+    //     // coreaudio: [256]u8,
+    //     // sndio: [256]u8,
+    //     // audio4: [256]u8,
+    //     // oss: [64]u8,
+    //     // aaudio: ma_int32,
+    //     // opensl: ma_uint32,
+    //     // webaudio: [32]u8,
+    //     // custom: union_unnamed_58,
+    //     // nullbackend: c_int,
+    //     switch (self.id) {
+    //         .wasapi => |v| fmt.allocPrint(allocator, "{d}", .{v}),
+    //         .dsound => |v| fmt.allocPrint(allocator, "{s}", .{&v}),
+    //         .winmm => |v| fmt.allocPrint(allocator, "{d}", .{v}),
+    //         .alsa => |v| fmt.allocPrint(allocator, "{s}", .{&v}),
+    //         .pulse => |v| fmt.allocPrint(allocator, "{s}", .{&v}),
+    //         .jack => |v| fmt.allocPrint(allocator, "{d}", .{v}),
+    //         .coreaudio => |v| fmt.allocPrint(allocator, "{s}", .{&v}),
+    //         .sndio => |v| fmt.allocPrint(allocator, "{s}", .{&v}),
+    //         .audio4 => |v| fmt.allocPrint(allocator, "{s}", .{&v}),
+    //         .oss => |v| fmt.allocPrint(allocator, "{s}", .{&v}),
+    //         .aaudio => |v| fmt.allocPrint(allocator, "{d}", .{v}),
+    //         .opensl => |v| fmt.allocPrint(allocator, "{d}", .{v}),
+    //         .webaudio => |v| fmt.allocPrint(allocator, "{s}", .{&v}),
+    //         .custom => |v| fmt.allocPrint(allocator, "{any}", .{v}),
+    //         .nullbackend => |v| fmt.allocPrint(allocator, "{d}", .{v}),
+    //     }
+    // }
+
+    fn copyFrom(self: *DeviceInfo, arena_allocator: Allocator, dev: *ma.ma_device_info) !void {
+        const name = blk: {
+            const eos_index = mem.indexOfSentinel(u8, 0, @ptrCast(&dev.name));
+            if (eos_index <= 0) break :blk "";
+            const _result = try arena_allocator.alloc(u8, eos_index);
+            errdefer arena_allocator.free(_result);
+            @memcpy(_result, dev.name[0..eos_index]);
+            break :blk _result;
+        };
+        errdefer arena_allocator.free(name);
+
+        const native_data_formats = blk: {
+            log.info("nativeFormatCount: {d}", .{dev.nativeDataFormatCount});
+            var _result = try ArrayList(DeviceDataFormat).initCapacity(arena_allocator, dev.nativeDataFormatCount);
+            errdefer _result.deinit();
+            if (dev.nativeDataFormatCount > 0) {
+                for (dev.nativeDataFormats[0..dev.nativeDataFormatCount]) |data_format| {
+                    try _result.append(.{
+                        .format = @enumFromInt(data_format.format),
+                        .channels = data_format.channels,
+                        .sample_rate = data_format.sampleRate,
+                        .flags = data_format.flags,
+                    });
+                }
+            }
+            break :blk _result;
+        };
+        errdefer native_data_formats.deinit();
+        self.* = .{
+            .id = dev.id,
+            .name = name,
+            .is_default = (dev.isDefault == 1),
+            .native_data_formats = native_data_formats.items,
+        };
+    }
+};
+
+pub const DeviceInfoList = struct {
+    arena: *ArenaAllocator,
+
+    /// playback device info list
+    playbacks: ArrayList(*DeviceInfo),
+
+    /// capture device info list
+    captures: ArrayList(*DeviceInfo),
+
+    pub fn init(allocator: Allocator, comptime cap: u32) !DeviceInfoList {
+        var result = DeviceInfoList{
+            .arena = try allocator.create(ArenaAllocator),
+            .playbacks = undefined,
+            .captures = undefined,
+        };
+        errdefer allocator.destroy(result.arena);
+
+        result.arena.* = ArenaAllocator.init(allocator);
+        errdefer result.arena.deinit();
+
+        result.playbacks = try ArrayList(*DeviceInfo).initCapacity(result.arena.allocator(), cap);
+        result.captures = try ArrayList(*DeviceInfo).initCapacity(result.arena.allocator(), cap);
+
+        return result;
+    }
+
+    pub fn deinit(self: *DeviceInfoList) void {
+        const allocator = self.arena.child_allocator;
+        self.arena.deinit();
+        allocator.destroy(self.arena);
+        self.* = undefined;
+    }
+};
+
+const Context = struct {
+    allocator: Allocator,
+    ma_context: *ma.ma_context,
+
+    pub fn init(allocator: Allocator) !Context {
+        const ma_context: *ma.ma_context = try allocator.create(ma.ma_context);
+        errdefer allocator.destroy(ma_context);
+
+        if (ma.ma_context_init(null, 0, null, ma_context) != ma.MA_SUCCESS) {
+            return error.MAContextInit;
+        }
+
+        return .{
+            .allocator = allocator,
+            .ma_context = ma_context,
+        };
+    }
+
+    pub fn deinit(self: *Context) void {
+        if (ma.ma_context_uninit(self.ma_context) != ma.MA_SUCCESS) {
+            @panic("Failed to call ma_context_uninit");
+        }
+        self.allocator.destroy(self.ma_context);
+        self.* = undefined;
+    }
+
+    /// get device info list
+    ///
+    /// ```
+    /// var device_info_list = try getDeviceInfoList(allocator, 5);
+    /// defer device_info_list.deinit();
+    ///
+    /// for(device_info_list.playbacks.items) |device_info| {
+    ///     ...
+    /// }
+    ///
+    /// for(device_info_list.captures.items) |device_info| {
+    ///     ...
+    /// }
+    /// ```
+    ///
+    pub fn getDeviceInfoList(self: Context, comptime cap: u32) !DeviceInfoList {
+        // get devices
+        //
+        var playback_devices: [cap]*ma.ma_device_info = undefined;
+        var playback_devices_count: u32 = undefined;
+        var capture_devices: [cap]*ma.ma_device_info = undefined;
+        var capture_devices_count: u32 = undefined;
+        if (ma.ma_context_get_devices(self.ma_context, @ptrCast(&playback_devices), &playback_devices_count, @ptrCast(&capture_devices), &capture_devices_count) != ma.MA_SUCCESS) {
+            return error.MAContextGetDevices;
+        }
+
+        // init result
+        //
+        var result = try DeviceInfoList.init(self.allocator, cap);
+        errdefer result.deinit();
+
+        // every DeviceInfoList own an arena_allocator
+        //
+        const arena_allocator = result.arena.allocator();
+
+        // append playback device info into result
+        //
+        for (playback_devices[0 .. playback_devices_count - 1]) |dev| {
+            const device_info = try arena_allocator.create(DeviceInfo);
+            try result.playbacks.append(device_info);
+            try device_info.copyFrom(arena_allocator, dev);
+        }
+
+        // append capture device info into result
+        //
+        for (capture_devices[0 .. capture_devices_count - 1]) |dev| {
+            const device_info = try arena_allocator.create(DeviceInfo);
+            try result.captures.append(device_info);
+            try device_info.copyFrom(arena_allocator, dev);
+        }
+
+        return result;
+    }
+};
+
+test "get devices" {
+    std.testing.log_level = std.log.Level.info;
+    var context = try Context.init(std.testing.allocator);
+    defer context.deinit();
+    var device_info_list = try context.getDeviceInfoList(10);
+    defer device_info_list.deinit();
+
+    for (device_info_list.playbacks.items) |dev| {
+        log.info(
+            \\
+            \\ PLAYBACK
+            \\     id                  : {any}
+            \\     name                : {s}
+            \\     is_default          : {any}
+            \\     native_data_formats : {any}
+        , .{ dev.id, dev.name, dev.is_default, dev.native_data_formats });
+    }
+
+    for (device_info_list.captures.items) |dev| {
+        log.info(
+            \\
+            \\ CAPTURE
+            \\     id                  : {any}
+            \\     name                : {s}
+            \\     is_default          : {any}
+            \\     native_data_formats : {any}
+        , .{ dev.id, dev.name, dev.is_default, dev.native_data_formats });
+    }
+}
