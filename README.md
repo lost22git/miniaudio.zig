@@ -9,7 +9,6 @@ my learning demonstration of Zig code interacting with C code
 
 - https://ziglang.org/documentation/master/#C
 - https://github.com/mackron/miniaudio
-- https://ziggit.dev/t/what-is-the-error-of-illegal-instruction-at-address-0xba8658/4262/2
 
 ## Usage
 
