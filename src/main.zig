@@ -919,7 +919,7 @@ pub const DeviceInfoList = struct {
     }
 };
 
-const Context = struct {
+pub const Context = struct {
     allocator: Allocator,
     ma_context: *ma.ma_context,
 
