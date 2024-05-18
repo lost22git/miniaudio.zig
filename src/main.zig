@@ -87,7 +87,7 @@ fn printDeviceInfoList(allocator: Allocator) void {
     var context = Context.init(allocator) catch return;
     defer context.deinit();
 
-    var device_info_list = context.getDeviceInfoList(5) catch return;
+    var device_info_list = context.getDeviceInfoList() catch return;
     defer device_info_list.deinit();
 
     for (device_info_list.playbacks.items) |dev| {
@@ -848,7 +848,7 @@ pub const DeviceInfo = struct {
     //     }
     // }
 
-    fn copyFrom(self: *DeviceInfo, arena_allocator: Allocator, dev: *ma.ma_device_info) !void {
+    fn copyFrom(self: *DeviceInfo, arena_allocator: Allocator, dev: ma.ma_device_info) !void {
         const name = blk: {
             const eos_index = mem.indexOfSentinel(u8, 0, @ptrCast(&dev.name));
             if (eos_index <= 0) break :blk "";
@@ -894,7 +894,7 @@ pub const DeviceInfoList = struct {
     /// capture device info list
     captures: ArrayList(*DeviceInfo),
 
-    pub fn init(allocator: Allocator, comptime cap: u32) !DeviceInfoList {
+    pub fn init(allocator: Allocator, playbacks_cap: u32, captures_cap: u32) !DeviceInfoList {
         var result = DeviceInfoList{
             .arena = try allocator.create(ArenaAllocator),
             .playbacks = undefined,
@@ -905,8 +905,8 @@ pub const DeviceInfoList = struct {
         result.arena.* = ArenaAllocator.init(allocator);
         errdefer result.arena.deinit();
 
-        result.playbacks = try ArrayList(*DeviceInfo).initCapacity(result.arena.allocator(), cap);
-        result.captures = try ArrayList(*DeviceInfo).initCapacity(result.arena.allocator(), cap);
+        result.playbacks = try ArrayList(*DeviceInfo).initCapacity(result.arena.allocator(), playbacks_cap);
+        result.captures = try ArrayList(*DeviceInfo).initCapacity(result.arena.allocator(), captures_cap);
 
         return result;
     }
@@ -916,6 +916,20 @@ pub const DeviceInfoList = struct {
         self.arena.deinit();
         allocator.destroy(self.arena);
         self.* = undefined;
+    }
+
+    fn appendPlaybackDevice(self: *DeviceInfoList, dev: ma.ma_device_info) !void {
+        const arena_allocator = self.arena.allocator();
+        const device_info = try arena_allocator.create(DeviceInfo);
+        try device_info.copyFrom(arena_allocator, dev);
+        try self.playbacks.append(device_info);
+    }
+
+    fn appendCaptureDevice(self: *DeviceInfoList, dev: ma.ma_device_info) !void {
+        const arena_allocator = self.arena.allocator();
+        const device_info = try arena_allocator.create(DeviceInfo);
+        try device_info.copyFrom(arena_allocator, dev);
+        try self.captures.append(device_info);
     }
 };
 
@@ -974,12 +988,12 @@ pub const Context = struct {
     /// }
     /// ```
     ///
-    pub fn getDeviceInfoList(self: Context, comptime cap: u32) !DeviceInfoList {
+    pub fn getDeviceInfoList(self: Context) !DeviceInfoList {
         // get devices
         //
-        var playback_devices: [cap]*ma.ma_device_info = undefined;
+        var playback_devices: [*:null]?ma.ma_device_info = undefined;
         var playback_devices_count: u32 = undefined;
-        var capture_devices: [cap]*ma.ma_device_info = undefined;
+        var capture_devices: [*:null]?ma.ma_device_info = undefined;
         var capture_devices_count: u32 = undefined;
         if (ma.ma_context_get_devices(self.ma_context, @ptrCast(&playback_devices), &playback_devices_count, @ptrCast(&capture_devices), &capture_devices_count) != ma.MA_SUCCESS) {
             return error.MAContextGetDevices;
@@ -987,27 +1001,23 @@ pub const Context = struct {
 
         // init result
         //
-        var result = try DeviceInfoList.init(self.allocator, cap);
+        var result = try DeviceInfoList.init(self.allocator, playback_devices_count, capture_devices_count);
         errdefer result.deinit();
-
-        // every DeviceInfoList own an arena_allocator
-        //
-        const arena_allocator = result.arena.allocator();
 
         // append playback device info into result
         //
-        for (playback_devices[0 .. playback_devices_count - 1]) |dev| {
-            const device_info = try arena_allocator.create(DeviceInfo);
-            try result.playbacks.append(device_info);
-            try device_info.copyFrom(arena_allocator, dev);
+        for (playback_devices[0..playback_devices_count]) |maybe_dev| {
+            if (maybe_dev) |dev| {
+                try result.appendPlaybackDevice(dev);
+            }
         }
 
         // append capture device info into result
         //
-        for (capture_devices[0 .. capture_devices_count - 1]) |dev| {
-            const device_info = try arena_allocator.create(DeviceInfo);
-            try result.captures.append(device_info);
-            try device_info.copyFrom(arena_allocator, dev);
+        for (capture_devices[0..capture_devices_count]) |maybe_dev| {
+            if (maybe_dev) |dev| {
+                try result.appendCaptureDevice(dev);
+            }
         }
 
         return result;
