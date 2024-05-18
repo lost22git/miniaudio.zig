@@ -923,6 +923,13 @@ pub const Context = struct {
     allocator: Allocator,
     ma_context: *ma.ma_context,
 
+    /// init Context
+    ///
+    /// ```
+    /// var context = try Context.init(allocator);
+    /// defer context.deinit();
+    /// ```
+    ///
     pub fn init(allocator: Allocator) !Context {
         const ma_context: *ma.ma_context = try allocator.create(ma.ma_context);
         errdefer allocator.destroy(ma_context);
@@ -937,6 +944,13 @@ pub const Context = struct {
         };
     }
 
+    /// deinit Context
+    ///
+    /// ```
+    /// var context = try Context.init(allocator);
+    /// defer context.deinit();
+    /// ```
+    ///
     pub fn deinit(self: *Context) void {
         if (ma.ma_context_uninit(self.ma_context) != ma.MA_SUCCESS) {
             @panic("Failed to call ma_context_uninit");
@@ -948,7 +962,7 @@ pub const Context = struct {
     /// get device info list
     ///
     /// ```
-    /// var device_info_list = try getDeviceInfoList(allocator, 5);
+    /// var device_info_list = try context.getDeviceInfoList(5);
     /// defer device_info_list.deinit();
     ///
     /// for(device_info_list.playbacks.items) |device_info| {
