@@ -1028,7 +1028,7 @@ test "get devices" {
     std.testing.log_level = std.log.Level.info;
     var context = try Context.init(std.testing.allocator);
     defer context.deinit();
-    var device_info_list = try context.getDeviceInfoList(10);
+    var device_info_list = try context.getDeviceInfoList();
     defer device_info_list.deinit();
 
     for (device_info_list.playbacks.items) |dev| {
