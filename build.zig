@@ -1,17 +1,17 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const miniaudio_header_dir = "src/c";
-const miniaudio_src_file = "src/c/miniaudio.c";
+const miniaudio_source_file = "src/c/miniaudio.c";
 const main_file = "src/main.zig";
 const test_file = "src/main.zig";
 
 fn compileMiniaudio(exe: *std.Build.Step.Compile) void {
     exe.addCSourceFile(.{ .file = .{
-        .path = miniaudio_src_file,
+        .cwd_relative = miniaudio_source_file,
     }, .flags = &.{
         "-fno-sanitize=undefined",
     } });
-    exe.addIncludePath(.{ .path = miniaudio_header_dir });
+    exe.addIncludePath(.{ .cwd_relative = miniaudio_header_dir });
     exe.linkLibC();
 
     if (exe.rootModuleTarget().os.tag == .linux) {
@@ -56,7 +56,7 @@ pub fn build(b: *std.Build) void {
     {
         const test_step = b.step("test", "Run unit tests");
         const unit_tests = b.addTest(.{
-            .root_source_file = .{ .path = test_file },
+            .root_source_file = .{ .cwd_relative = test_file },
             .target = target,
             .optimize = optimize,
         });
@@ -83,12 +83,12 @@ pub fn build(b: *std.Build) void {
 
             const download_redbean = b.addSystemCommand(&.{ "curl", "-fsSLo", "docs.com", "https://redbean.dev/redbean-2.2.com", "--ssl-no-revoke" });
             download_redbean.has_side_effects = true;
-            download_redbean.setCwd(.{ .path = b.install_path });
+            download_redbean.setCwd(.{ .cwd_relative = b.install_path });
             download_redbean.expectExitCode(0);
 
             const zip_docs_into_redbean = b.addSystemCommand(&.{ "zip", "-r", "docs.com", "docs" });
             zip_docs_into_redbean.has_side_effects = true;
-            zip_docs_into_redbean.setCwd(.{ .path = b.install_path });
+            zip_docs_into_redbean.setCwd(.{ .cwd_relative = b.install_path });
             zip_docs_into_redbean.expectExitCode(0);
             zip_docs_into_redbean.step.dependOn(&download_redbean.step);
 

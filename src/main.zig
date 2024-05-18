@@ -860,7 +860,7 @@ pub const DeviceInfo = struct {
         errdefer arena_allocator.free(name);
 
         const native_data_formats = blk: {
-            log.info("nativeFormatCount: {d}", .{dev.nativeDataFormatCount});
+            log.debug("nativeFormatCount: {d}", .{dev.nativeDataFormatCount});
             var _result = try ArrayList(DeviceDataFormat).initCapacity(arena_allocator, dev.nativeDataFormatCount);
             errdefer _result.deinit();
             if (dev.nativeDataFormatCount > 0) {
