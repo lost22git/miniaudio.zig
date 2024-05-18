@@ -82,17 +82,17 @@ pub fn build(b: *std.Build) void {
             const docs_com_step = b.step("docscom", "Build docs.com (documentation http server powered by redbean.com)");
 
             const download_redbean = b.addSystemCommand(&.{ "curl", "-fsSLo", "docs.com", "https://redbean.dev/redbean-2.2.com", "--ssl-no-revoke" });
-            download_redbean.has_side_effects = true;
+            // download_redbean.has_side_effects = true;
             download_redbean.setCwd(.{ .cwd_relative = b.install_path });
             download_redbean.expectExitCode(0);
+            download_redbean.step.dependOn(docs_step);
 
             const zip_docs_into_redbean = b.addSystemCommand(&.{ "zip", "-r", "docs.com", "docs" });
-            zip_docs_into_redbean.has_side_effects = true;
+            // zip_docs_into_redbean.has_side_effects = true;
             zip_docs_into_redbean.setCwd(.{ .cwd_relative = b.install_path });
             zip_docs_into_redbean.expectExitCode(0);
             zip_docs_into_redbean.step.dependOn(&download_redbean.step);
 
-            docs_com_step.dependOn(docs_step);
             docs_com_step.dependOn(&zip_docs_into_redbean.step);
         }
     }
