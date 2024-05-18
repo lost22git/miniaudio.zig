@@ -976,7 +976,7 @@ pub const Context = struct {
     /// get device info list
     ///
     /// ```
-    /// var device_info_list = try context.getDeviceInfoList(5);
+    /// var device_info_list = try context.getDeviceInfoList();
     /// defer device_info_list.deinit();
     ///
     /// for(device_info_list.playbacks.items) |device_info| {
@@ -991,9 +991,9 @@ pub const Context = struct {
     pub fn getDeviceInfoList(self: Context) !DeviceInfoList {
         // get devices
         //
-        var playback_devices: [*:null]?ma.ma_device_info = undefined;
+        var playback_devices: ?[*]ma.ma_device_info = undefined;
         var playback_devices_count: u32 = undefined;
-        var capture_devices: [*:null]?ma.ma_device_info = undefined;
+        var capture_devices: ?[*]ma.ma_device_info = undefined;
         var capture_devices_count: u32 = undefined;
         if (ma.ma_context_get_devices(self.ma_context, @ptrCast(&playback_devices), &playback_devices_count, @ptrCast(&capture_devices), &capture_devices_count) != ma.MA_SUCCESS) {
             return error.MAContextGetDevices;
@@ -1006,16 +1006,16 @@ pub const Context = struct {
 
         // append playback device info into result
         //
-        for (playback_devices[0..playback_devices_count]) |maybe_dev| {
-            if (maybe_dev) |dev| {
+        if (playback_devices) |devs| {
+            for (devs[0..playback_devices_count]) |dev| {
                 try result.appendPlaybackDevice(dev);
             }
         }
 
         // append capture device info into result
         //
-        for (capture_devices[0..capture_devices_count]) |maybe_dev| {
-            if (maybe_dev) |dev| {
+        if (capture_devices) |devs| {
+            for (devs[0..capture_devices_count]) |dev| {
                 try result.appendCaptureDevice(dev);
             }
         }
