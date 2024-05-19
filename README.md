@@ -23,3 +23,9 @@ zig build run -Doptimize=ReleaseFast -- your.mp3
 ```sh
 zig build docs
 ```
+
+### NOTES
+
+- miniaudio could not adjust system volume (only software volume control)
+- miniaudio could not adjust playing speed
+- miniaudio could not set multi loop points
