@@ -152,7 +152,7 @@ fn setLoopPoint(sound: Sound, ins_tks: *TokenIterator(u8, .any)) void {
 
 fn gotoNextNthSecond(sound: Sound, ins_tks: *TokenIterator(u8, .any)) void {
     const time_str = ins_tks.next() orelse return;
-    const offset = fmt.parseInt(i64, time_str, 10) catch return;
+    const offset = fmt.parseInt(i32, time_str, 10) catch return;
     sound.gotoNextNthSecond(offset) catch return;
 }
 
@@ -383,6 +383,26 @@ pub const SoundDataFormat = struct {
     sample_rate: u32, // sample rate per channel
 };
 
+/// convert second to frame
+///
+/// ```
+/// const frame: u64 = frameFromSecond(48000, 10);
+/// ```
+///
+pub fn frameFromSecond(sample_rate: u32, second: u32) u64 {
+    return @as(u64, @intCast(sample_rate)) * @as(u64, @intCast(second));
+}
+
+/// convert second (signed) to frame
+///
+/// ```
+/// const frame: i64 = frameFromSecondSigned(48000, -10);
+/// ```
+///
+pub fn frameFromSecondSigned(sample_rate: u32, second: i32) i64 {
+    return @as(i64, @intCast(sample_rate)) * @as(i64, @intCast(second));
+}
+
 pub const Sound = struct {
     engine: *Engine,
     ma_sound: *ma.ma_sound,
@@ -612,9 +632,9 @@ pub const Sound = struct {
     ///
     pub fn setLoopPointInSecond(self: Sound, begin: u32, end: u32) !void {
         log.info("LOOP_POINT: {d}-{d}s", .{ begin, end });
-        const sample_rate: u64 = @intCast(self.engine.getSampleRate());
-        const begin_frame = @as(u64, @intCast(begin)) * sample_rate;
-        const end_frame = @as(u64, @intCast(end)) * sample_rate;
+        const sample_rate = self.engine.getSampleRate();
+        const begin_frame = frameFromSecond(sample_rate, begin);
+        const end_frame = frameFromSecond(sample_rate, end);
         try self.setLoopPointInFrame(begin_frame, end_frame);
     }
 
@@ -640,7 +660,7 @@ pub const Sound = struct {
     ///
     pub fn gotoNthSecond(self: Sound, nth: u32) !void {
         log.info("GOTO: {d}s", .{nth});
-        const nth_frame: u64 = @as(u64, @intCast(nth)) * @as(u64, @intCast(self.engine.getSampleRate()));
+        const nth_frame: u64 = frameFromSecond(self.engine.getSampleRate(), nth);
         try self.gotoNthFrame(nth_frame);
     }
 
@@ -657,21 +677,20 @@ pub const Sound = struct {
         }
     }
 
-    /// go to next seconds if `offset` is positive
-    /// go to prev seconds if `offset` is negative
+    /// go to next seconds if `offset` is positive; go to prev seconds if `offset` is negative
     ///
     /// ```
     /// try sound.gotoNextNthSecond(-10);
     /// try sound.gotoNextNthSecond(10);
     /// ```
     ///
-    pub fn gotoNextNthSecond(self: Sound, offset: i64) !void {
+    pub fn gotoNextNthSecond(self: Sound, offset: i32) !void {
         log.info("GOTO_NEXT: {d}s", .{offset});
-        try self.gotoNextNthFrame(offset * @as(i64, @intCast(self.engine.getSampleRate())));
+        if (offset == 0) return;
+        try self.gotoNextNthFrame(frameFromSecondSigned(self.engine.getSampleRate(), offset));
     }
 
-    /// go to next frames if `offset` is positive
-    /// go to prev frames if `offset` is negative
+    /// go to next frames if `offset` is positive; go to prev frames if `offset` is negative
     ///
     /// ```
     /// try sound.gotoNextNthFrame(-10);
@@ -679,6 +698,7 @@ pub const Sound = struct {
     /// ```
     ///
     pub fn gotoNextNthFrame(self: Sound, offset: i64) !void {
+        if (offset == 0) return;
         const nth_frame = try self.getNthFrame();
         const nth_frame_to_go = if (offset >= 0)
             nth_frame +| @as(u64, @intCast(offset))
