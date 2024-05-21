@@ -828,10 +828,63 @@ pub const DeviceDataFormat = struct {
 };
 
 pub const DeviceInfo = struct {
+    arena: *ArenaAllocator,
     id: ma.ma_device_id,
     name: []const u8,
     is_default: bool,
     native_data_formats: []DeviceDataFormat,
+
+    pub fn init(allocator: Allocator, dev: ma.ma_device_info) !DeviceInfo {
+        var arena = try allocator.create(ArenaAllocator);
+        errdefer allocator.destroy(arena);
+        arena.* = ArenaAllocator.init(allocator);
+        errdefer arena.deinit();
+
+        const arena_allocator = arena.allocator();
+
+        const name = blk: {
+            const eos_index = mem.indexOfSentinel(u8, 0, @ptrCast(&dev.name));
+            if (eos_index <= 0) break :blk "";
+            const _result = try arena_allocator.alloc(u8, eos_index);
+            errdefer arena_allocator.free(_result);
+            @memcpy(_result, dev.name[0..eos_index]);
+            break :blk _result;
+        };
+        errdefer arena_allocator.free(name);
+
+        const native_data_formats = blk: {
+            log.debug("nativeFormatCount: {d}", .{dev.nativeDataFormatCount});
+            var _result = try ArrayList(DeviceDataFormat).initCapacity(arena_allocator, dev.nativeDataFormatCount);
+            errdefer _result.deinit();
+            if (dev.nativeDataFormatCount > 0) {
+                for (dev.nativeDataFormats[0..dev.nativeDataFormatCount]) |data_format| {
+                    try _result.append(.{
+                        .format = @enumFromInt(data_format.format),
+                        .channels = data_format.channels,
+                        .sample_rate = data_format.sampleRate,
+                        .flags = data_format.flags,
+                    });
+                }
+            }
+            break :blk _result;
+        };
+        errdefer native_data_formats.deinit();
+
+        return .{
+            .arena = arena,
+            .id = dev.id,
+            .name = name,
+            .is_default = (dev.isDefault == 1),
+            .native_data_formats = native_data_formats.items,
+        };
+    }
+
+    pub fn deinit(self: *DeviceInfo) void {
+        const allocator = self.arena.child_allocator;
+        self.arena.deinit();
+        allocator.destroy(self.arena);
+        self.* = undefined;
+    }
 
     // pub fn idStr(self: DeviceInfo, allocator: Allocator) ![]const u8 {
     //     // wasapi: [64]ma_wchar_win32,
@@ -868,41 +921,6 @@ pub const DeviceInfo = struct {
     //     }
     // }
 
-    fn copyFrom(self: *DeviceInfo, arena_allocator: Allocator, dev: ma.ma_device_info) !void {
-        const name = blk: {
-            const eos_index = mem.indexOfSentinel(u8, 0, @ptrCast(&dev.name));
-            if (eos_index <= 0) break :blk "";
-            const _result = try arena_allocator.alloc(u8, eos_index);
-            errdefer arena_allocator.free(_result);
-            @memcpy(_result, dev.name[0..eos_index]);
-            break :blk _result;
-        };
-        errdefer arena_allocator.free(name);
-
-        const native_data_formats = blk: {
-            log.debug("nativeFormatCount: {d}", .{dev.nativeDataFormatCount});
-            var _result = try ArrayList(DeviceDataFormat).initCapacity(arena_allocator, dev.nativeDataFormatCount);
-            errdefer _result.deinit();
-            if (dev.nativeDataFormatCount > 0) {
-                for (dev.nativeDataFormats[0..dev.nativeDataFormatCount]) |data_format| {
-                    try _result.append(.{
-                        .format = @enumFromInt(data_format.format),
-                        .channels = data_format.channels,
-                        .sample_rate = data_format.sampleRate,
-                        .flags = data_format.flags,
-                    });
-                }
-            }
-            break :blk _result;
-        };
-        errdefer native_data_formats.deinit();
-        self.* = .{
-            .id = dev.id,
-            .name = name,
-            .is_default = (dev.isDefault == 1),
-            .native_data_formats = native_data_formats.items,
-        };
-    }
 };
 
 pub const DeviceInfoList = struct {
@@ -939,17 +957,15 @@ pub const DeviceInfoList = struct {
     }
 
     fn appendPlaybackDevice(self: *DeviceInfoList, dev: ma.ma_device_info) !void {
-        const arena_allocator = self.arena.allocator();
-        const device_info = try arena_allocator.create(DeviceInfo);
-        try device_info.copyFrom(arena_allocator, dev);
-        try self.playbacks.append(device_info);
+        var device_info = try DeviceInfo.init(self.arena.allocator(), dev);
+        errdefer device_info.deinit();
+        try self.playbacks.append(&device_info);
     }
 
     fn appendCaptureDevice(self: *DeviceInfoList, dev: ma.ma_device_info) !void {
-        const arena_allocator = self.arena.allocator();
-        const device_info = try arena_allocator.create(DeviceInfo);
-        try device_info.copyFrom(arena_allocator, dev);
-        try self.captures.append(device_info);
+        var device_info = try DeviceInfo.init(self.arena.allocator(), dev);
+        errdefer device_info.deinit();
+        try self.captures.append(&device_info);
     }
 };
 
@@ -1009,6 +1025,10 @@ pub const Context = struct {
     /// ```
     ///
     pub fn getDeviceInfoList(self: Context) !DeviceInfoList {
+        return getDeviceInfoListAlloc(self, self.allocator);
+    }
+
+    pub fn getDeviceInfoListAlloc(self: Context, allocator: Allocator) !DeviceInfoList {
         // get devices
         //
         var playback_devices: ?[*]ma.ma_device_info = undefined;
@@ -1021,7 +1041,7 @@ pub const Context = struct {
 
         // init result
         //
-        var result = try DeviceInfoList.init(self.allocator, playback_devices_count, capture_devices_count);
+        var result = try DeviceInfoList.init(allocator, playback_devices_count, capture_devices_count);
         errdefer result.deinit();
 
         // append playback device info into result
@@ -1042,34 +1062,23 @@ pub const Context = struct {
 
         return result;
     }
+
+    pub const DeviceType = enum(u8) {
+        playback = 1,
+        capture = 2,
+        duplex = 3,
+        loopback = 4,
+    };
+
+    pub fn getDeviceInfo(self: Context, device_type: DeviceType, device_id: ma.ma_device_id) !DeviceInfo {
+        return try getDeviceInfoAlloc(self, self.allocator, device_type, device_id);
+    }
+
+    pub fn getDeviceInfoAlloc(self: Context, allocator: Allocator, device_type: DeviceType, device_id: ma.ma_device_id) !DeviceInfo {
+        var dev: ma.ma_device_info = undefined;
+        if (ma.ma_context_get_device_info(self.ma_context, device_type, &device_id, &dev) != ma.MA_SUCCESSa) {
+            return error.MAContextGetDeviceInfo;
+        }
+        return try DeviceInfo.init(allocator, dev);
+    }
 };
-
-test "get devices" {
-    std.testing.log_level = std.log.Level.info;
-    var context = try Context.init(std.testing.allocator);
-    defer context.deinit();
-    var device_info_list = try context.getDeviceInfoList();
-    defer device_info_list.deinit();
-
-    for (device_info_list.playbacks.items) |dev| {
-        log.info(
-            \\
-            \\ PLAYBACK
-            \\     id                  : {any}
-            \\     name                : {s}
-            \\     is_default          : {any}
-            \\     native_data_formats : {any}
-        , .{ dev.id, dev.name, dev.is_default, dev.native_data_formats });
-    }
-
-    for (device_info_list.captures.items) |dev| {
-        log.info(
-            \\
-            \\ CAPTURE
-            \\     id                  : {any}
-            \\     name                : {s}
-            \\     is_default          : {any}
-            \\     native_data_formats : {any}
-        , .{ dev.id, dev.name, dev.is_default, dev.native_data_formats });
-    }
-}
