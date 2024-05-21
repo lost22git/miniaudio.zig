@@ -75,12 +75,51 @@ pub fn main() !void {
                 'k' => setPan(sound, &ins_tks),
                 'v' => setVolume(sound, &ins_tks),
                 'd' => printDeviceInfoList(allocator),
+                'r' => getDeviceInfo(allocator),
                 else => continue,
             }
         } else {
             continue;
         }
     }
+}
+
+fn getDeviceInfo(allocator: Allocator) void {
+    var context = Context.init(allocator) catch return;
+    defer context.deinit();
+
+    var device_info_list = context.getDeviceInfoList() catch return;
+    defer device_info_list.deinit();
+
+    var xoshiro256 = std.Random.Xoshiro256.init(2);
+    var rand = xoshiro256.random();
+
+    const device_type: DeviceType = @enumFromInt(rand.intRangeAtMost(u8, 1, 2));
+    log.info("DEVICE_TYPE: {any}", .{device_type});
+
+    const _dev = switch (device_type) {
+        .playback => blk: {
+            const index = rand.uintAtMost(usize, device_info_list.playbacks.items.len - 1);
+            break :blk device_info_list.playbacks.items[index];
+        },
+        .capture => blk: {
+            const index = rand.uintAtMost(usize, device_info_list.captures.items.len - 1);
+            break :blk device_info_list.captures.items[index];
+        },
+        else => return,
+    };
+
+    var dev = context.getDeviceInfo(device_type, _dev.id) catch return;
+    defer dev.deinit();
+
+    log.info(
+        \\
+        \\ PLAYBACK
+        \\     id                  : {any}
+        \\     name                : {s}
+        \\     is_default          : {any}
+        \\     native_data_formats : {any}
+    , .{ dev.id, dev.name, dev.is_default, dev.native_data_formats });
 }
 
 fn printDeviceInfoList(allocator: Allocator) void {
@@ -91,8 +130,6 @@ fn printDeviceInfoList(allocator: Allocator) void {
     defer device_info_list.deinit();
 
     for (device_info_list.playbacks.items) |dev| {
-        // const id_str = try dev.idStr(allocator);
-        // defer allocator.free(id_str);
         const id_str = "";
 
         log.info(
@@ -107,8 +144,6 @@ fn printDeviceInfoList(allocator: Allocator) void {
     }
 
     for (device_info_list.captures.items) |dev| {
-        // const id_str = try dev.idStr(allocator);
-        // defer allocator.free(id_str);
         const id_str = "";
 
         log.info(
@@ -827,6 +862,13 @@ pub const DeviceDataFormat = struct {
     flags: u32,
 };
 
+pub const DeviceType = enum(u8) {
+    playback = 1,
+    capture = 2,
+    duplex = 3,
+    loopback = 4,
+};
+
 pub const DeviceInfo = struct {
     arena: *ArenaAllocator,
     id: ma.ma_device_id,
@@ -835,9 +877,12 @@ pub const DeviceInfo = struct {
     native_data_formats: []DeviceDataFormat,
 
     pub fn init(allocator: Allocator, dev: ma.ma_device_info) !DeviceInfo {
-        var arena = try allocator.create(ArenaAllocator);
-        errdefer allocator.destroy(arena);
-        arena.* = ArenaAllocator.init(allocator);
+        var arena = blk: {
+            const result = try allocator.create(ArenaAllocator);
+            errdefer allocator.destroy(result);
+            result.* = ArenaAllocator.init(allocator);
+            break :blk result;
+        };
         errdefer arena.deinit();
 
         const arena_allocator = arena.allocator();
@@ -927,10 +972,10 @@ pub const DeviceInfoList = struct {
     arena: *ArenaAllocator,
 
     /// playback device info list
-    playbacks: ArrayList(*DeviceInfo),
+    playbacks: ArrayList(DeviceInfo),
 
     /// capture device info list
-    captures: ArrayList(*DeviceInfo),
+    captures: ArrayList(DeviceInfo),
 
     pub fn init(allocator: Allocator, playbacks_cap: u32, captures_cap: u32) !DeviceInfoList {
         var result = DeviceInfoList{
@@ -943,8 +988,8 @@ pub const DeviceInfoList = struct {
         result.arena.* = ArenaAllocator.init(allocator);
         errdefer result.arena.deinit();
 
-        result.playbacks = try ArrayList(*DeviceInfo).initCapacity(result.arena.allocator(), playbacks_cap);
-        result.captures = try ArrayList(*DeviceInfo).initCapacity(result.arena.allocator(), captures_cap);
+        result.playbacks = try ArrayList(DeviceInfo).initCapacity(result.arena.allocator(), playbacks_cap);
+        result.captures = try ArrayList(DeviceInfo).initCapacity(result.arena.allocator(), captures_cap);
 
         return result;
     }
@@ -959,13 +1004,13 @@ pub const DeviceInfoList = struct {
     fn appendPlaybackDevice(self: *DeviceInfoList, dev: ma.ma_device_info) !void {
         var device_info = try DeviceInfo.init(self.arena.allocator(), dev);
         errdefer device_info.deinit();
-        try self.playbacks.append(&device_info);
+        try self.playbacks.append(device_info);
     }
 
     fn appendCaptureDevice(self: *DeviceInfoList, dev: ma.ma_device_info) !void {
         var device_info = try DeviceInfo.init(self.arena.allocator(), dev);
         errdefer device_info.deinit();
-        try self.captures.append(&device_info);
+        try self.captures.append(device_info);
     }
 };
 
@@ -1063,20 +1108,20 @@ pub const Context = struct {
         return result;
     }
 
-    pub const DeviceType = enum(u8) {
-        playback = 1,
-        capture = 2,
-        duplex = 3,
-        loopback = 4,
-    };
-
+    /// get device info by given device_type and device_id
+    ///
+    /// ```
+    /// var device_info = try context.getDeviceInfo(.playback, "device id");
+    /// defer device_info.deinit();
+    /// ```
+    ///
     pub fn getDeviceInfo(self: Context, device_type: DeviceType, device_id: ma.ma_device_id) !DeviceInfo {
         return try getDeviceInfoAlloc(self, self.allocator, device_type, device_id);
     }
 
     pub fn getDeviceInfoAlloc(self: Context, allocator: Allocator, device_type: DeviceType, device_id: ma.ma_device_id) !DeviceInfo {
         var dev: ma.ma_device_info = undefined;
-        if (ma.ma_context_get_device_info(self.ma_context, device_type, &device_id, &dev) != ma.MA_SUCCESSa) {
+        if (ma.ma_context_get_device_info(self.ma_context, @intFromEnum(device_type), &device_id, &dev) != ma.MA_SUCCESS) {
             return error.MAContextGetDeviceInfo;
         }
         return try DeviceInfo.init(allocator, dev);
