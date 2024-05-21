@@ -38,8 +38,23 @@ pub fn main() !void {
     const sound_file_path = args.next() orelse return error.ArgsNotFound;
     log.info("sound file path: {s}", .{sound_file_path});
 
+    // // select a device for playback
+    // //
+    // var device_info = blk: {
+    //     var context = try Context.init(allocator);
+    //     defer context.deinit();
+    //
+    //     var device_info_list = try context.getDeviceInfoList();
+    //     defer device_info_list.deinit();
+    //
+    //     const result = try context.getDeviceInfoAlloc(allocator, .playback, device_info_list.playbacks.items[1].id);
+    //     break :blk result;
+    // };
+    // defer device_info.deinit();
+
     // engine init
     //
+    // var engine = try Engine.initWithDeviceInfo(allocator, device_info);
     var engine = try Engine.init(allocator);
     defer engine.deinit();
 
@@ -255,6 +270,13 @@ fn getValidSliceForTime(time_str: []const u8) ![]const u8 {
 }
 
 fn printInfo(sound: Sound) void {
+    const device_id = sound.engine.getDeviceId();
+    const device_type = sound.engine.getDeviceType();
+    const device_name = sound.engine.getDeviceNameAlloc(sound.engine.allocator) catch return;
+    defer sound.engine.allocator.free(device_name);
+
+    const sample_foramt = sound.engine.getSampleFormat();
+
     const frame_rate = sound.engine.getSampleRate();
     const channels = sound.engine.getChannels();
 
@@ -276,19 +298,26 @@ fn printInfo(sound: Sound) void {
 
     log.info(
         \\
-        \\  TIME       : {} / {}
-        \\  TIME(ms)   : {d} / {d}
-        \\  FRAME      : {d} / {d}
-        \\  FRAME_RATE : {d}
-        \\  CHANNELS   : {d}
-        \\  DATA_FORMAT: {any}
-        \\  PAN        : {d}
-        \\  PITCH      : {d}
-        \\  VOLUME     : {d}
-        \\  MUTING     : {s}
-        \\  PLAYING    : {s}
-        \\  LOOPING    : {s}
+        \\  DEV_TYPE      : {any}
+        \\  DEV_ID        : {any}
+        \\  DEV_NAME      : {s}
+        \\  TIME          : {} / {}
+        \\  TIME(ms)      : {d} / {d}
+        \\  FRAME         : {d} / {d}
+        \\  FRAME_RATE    : {d}
+        \\  CHANNELS      : {d}
+        \\  SAMPLE_FORMAT : {any} 
+        \\  DATA_FORMAT   : {any}
+        \\  PAN           : {d}
+        \\  PITCH         : {d}
+        \\  VOLUME        : {d}
+        \\  MUTING        : {s}
+        \\  PLAYING       : {s}
+        \\  LOOPING       : {s}
     , .{
+        device_type,
+        device_id,
+        device_name,
         fmt.fmtDuration(nth_millis * time.ns_per_ms),
         fmt.fmtDuration(total_millis * time.ns_per_ms),
         nth_millis,
@@ -297,6 +326,7 @@ fn printInfo(sound: Sound) void {
         total_frames,
         frame_rate,
         channels,
+        sample_foramt,
         data_format,
         pan,
         pitch,
@@ -340,6 +370,25 @@ pub const Engine = struct {
         };
     }
 
+    pub fn initWithDeviceInfo(allocator: Allocator, device_info: DeviceInfo) !Engine {
+        var ma_engine_config = ma.ma_engine_config_init();
+        ma_engine_config.pPlaybackDeviceID = @ptrCast(@constCast(&device_info.id));
+        ma_engine_config.channels = device_info.native_data_formats[0].channels;
+        ma_engine_config.sampleRate = device_info.native_data_formats[0].sample_rate;
+
+        const ma_engine = try allocator.create(ma.ma_engine);
+        errdefer allocator.destroy(ma_engine);
+
+        if (ma.ma_engine_init(&ma_engine_config, ma_engine) != ma.MA_SUCCESS) {
+            return error.MAEngineInit;
+        }
+
+        return .{
+            .allocator = allocator,
+            .ma_engine = ma_engine,
+        };
+    }
+
     /// deinit
     ///
     /// ```
@@ -372,6 +421,76 @@ pub const Engine = struct {
     ///
     pub fn getChannels(self: Engine) u32 {
         return ma.ma_engine_get_channels(self.ma_engine);
+    }
+
+    /// get sample format
+    ///
+    /// ```
+    /// const smaple_format = engine.getSampleFormat();
+    /// ```
+    ///
+    pub fn getSampleFormat(self: Engine) SampleFormat {
+        const ma_device = ma.ma_engine_get_device(self.ma_engine);
+        const device_type: DeviceType = @enumFromInt(ma_device.*.type);
+
+        const format = switch (device_type) {
+            .playback => ma_device.*.playback.format,
+            .capture => ma_device.*.capture.format,
+            .duplex => ma_device.*.playback.format,
+            .loopback => ma_device.*.playback.format,
+        };
+
+        return @enumFromInt(format);
+    }
+
+    /// get current working device type
+    ///
+    /// ```
+    /// const device_type = engine.getDeviceType();
+    /// ```
+    ///
+    pub fn getDeviceType(self: Engine) DeviceType {
+        const ma_device = ma.ma_engine_get_device(self.ma_engine);
+        return @enumFromInt(ma_device.*.type);
+    }
+
+    /// get current working device id
+    ///
+    /// ```
+    /// const device_id = engine.getDeviceId();
+    /// ```
+    ///
+    pub fn getDeviceId(self: Engine) ma.ma_device_id {
+        const ma_device = ma.ma_engine_get_device(self.ma_engine);
+        const device_type: DeviceType = @enumFromInt(ma_device.*.type);
+
+        return switch (device_type) {
+            .playback => ma_device.*.playback.id,
+            .capture => ma_device.*.capture.id,
+            .duplex => ma_device.*.playback.id,
+            .loopback => ma_device.*.playback.id,
+        };
+    }
+
+    /// get current working device name
+    ///
+    /// ```
+    /// const device_name = try engine.getDeviceNameAlloc(allocator)
+    /// defer allocator.free(device_name);
+    /// ```
+    ///
+    pub fn getDeviceNameAlloc(self: Engine, allocator: Allocator) ![]u8 {
+        const ma_device = ma.ma_engine_get_device(self.ma_engine);
+        const device_type: DeviceType = @enumFromInt(ma_device.*.type);
+
+        const raw_name = switch (device_type) {
+            .playback => ma_device.*.playback.name,
+            .capture => ma_device.*.capture.name,
+            .duplex => ma_device.*.playback.name,
+            .loopback => ma_device.*.playback.name,
+        };
+
+        return try allocator.dupe(u8, mem.sliceTo(&raw_name, 0));
     }
 };
 
@@ -875,8 +994,9 @@ pub const DeviceInfo = struct {
     name: []const u8,
     is_default: bool,
     native_data_formats: []DeviceDataFormat,
+    type: DeviceType,
 
-    pub fn init(allocator: Allocator, dev: ma.ma_device_info) !DeviceInfo {
+    pub fn init(allocator: Allocator, device_type: DeviceType, dev: ma.ma_device_info) !DeviceInfo {
         var arena = blk: {
             const result = try allocator.create(ArenaAllocator);
             errdefer allocator.destroy(result);
@@ -887,14 +1007,7 @@ pub const DeviceInfo = struct {
 
         const arena_allocator = arena.allocator();
 
-        const name = blk: {
-            const eos_index = mem.indexOfSentinel(u8, 0, @ptrCast(&dev.name));
-            if (eos_index <= 0) break :blk "";
-            const _result = try arena_allocator.alloc(u8, eos_index);
-            errdefer arena_allocator.free(_result);
-            @memcpy(_result, dev.name[0..eos_index]);
-            break :blk _result;
-        };
+        const name = try arena_allocator.dupe(u8, mem.sliceTo(&dev.name, 0));
         errdefer arena_allocator.free(name);
 
         const native_data_formats = blk: {
@@ -921,6 +1034,7 @@ pub const DeviceInfo = struct {
             .name = name,
             .is_default = (dev.isDefault == 1),
             .native_data_formats = native_data_formats.items,
+            .type = device_type,
         };
     }
 
@@ -1002,13 +1116,13 @@ pub const DeviceInfoList = struct {
     }
 
     fn appendPlaybackDevice(self: *DeviceInfoList, dev: ma.ma_device_info) !void {
-        var device_info = try DeviceInfo.init(self.arena.allocator(), dev);
+        var device_info = try DeviceInfo.init(self.arena.allocator(), .playback, dev);
         errdefer device_info.deinit();
         try self.playbacks.append(device_info);
     }
 
     fn appendCaptureDevice(self: *DeviceInfoList, dev: ma.ma_device_info) !void {
-        var device_info = try DeviceInfo.init(self.arena.allocator(), dev);
+        var device_info = try DeviceInfo.init(self.arena.allocator(), .capture, dev);
         errdefer device_info.deinit();
         try self.captures.append(device_info);
     }
@@ -1124,6 +1238,6 @@ pub const Context = struct {
         if (ma.ma_context_get_device_info(self.ma_context, @intFromEnum(device_type), &device_id, &dev) != ma.MA_SUCCESS) {
             return error.MAContextGetDeviceInfo;
         }
-        return try DeviceInfo.init(allocator, dev);
+        return try DeviceInfo.init(allocator, device_type, dev);
     }
 };
